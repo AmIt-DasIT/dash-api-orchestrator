@@ -1,273 +1,327 @@
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Edit, Trash } from 'lucide-react';
-import { DataTable, Column } from '@/components/shared/DataTable';
+import { Input } from '@/components/ui/input';
+import { DataTable } from '@/components/shared/DataTable';
 import { DataForm } from '@/components/shared/DataForm';
 import { FormField, FormItem, FormLabel, FormControl, FormMessage } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { getPromotions, createPromotion, updatePromotion, deletePromotion } from '@/api/promotion';
-import { Promotion } from '@/types';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, 
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
 import { z } from 'zod';
 import { format } from 'date-fns';
-import { useToast } from '@/hooks/use-toast';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { CalendarIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { getPromotions, createPromotion, updatePromotion, deletePromotion } from '@/api/promotion';
+import { Promotion } from '@/types';
 
 const promotionSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  description: z.string().optional(),
-  discount_rate: z.number().min(0, 'Discount rate must be positive').max(100, 'Discount rate cannot exceed 100%'),
-  start_date: z.string().min(1, 'Start date is required'),
-  end_date: z.string().min(1, 'End date is required'),
+  name: z.string().min(2, { message: "Name must be at least 2 characters." }),
+  description: z.string().min(2, { message: "Description must be at least 2 characters." }),
+  discount_rate: z.coerce.number().min(0, { message: "Discount rate must be at least 0." }).max(100, { message: "Discount rate must be at most 100." }),
+  start_date: z.string(),
+  end_date: z.string(),
 });
 
-type PromotionFormData = z.infer<typeof promotionSchema>;
+type FormValues = z.infer<typeof promotionSchema>;
 
-const Promotions = () => {
-  const [page, setPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState('');
+export default function Promotions() {
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null);
-  const queryClient = useQueryClient();
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<Promotion | null>(null);
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined);
+  
   const { toast } = useToast();
-  const pageSize = 10;
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['promotions', page, searchQuery],
-    queryFn: () => getPromotions(page, pageSize, searchQuery),
+  const queryClient = useQueryClient();
+  
+  const { data: promotions = [], isLoading } = useQuery({
+    queryKey: ['promotions'],
+    queryFn: getPromotions,
   });
-
+  
   const createMutation = useMutation({
     mutationFn: createPromotion,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['promotions'] });
       toast({
-        title: 'Success',
-        description: 'Promotion created successfully',
+        title: "Promotion Created",
+        description: "The promotion has been created successfully.",
+      });
+      setIsFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to create promotion: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
+  
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Omit<Promotion, 'id' | 'created_at' | 'updated_at'>> }) => 
-      updatePromotion(id, data),
+    mutationFn: updatePromotion,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['promotions'] });
       toast({
-        title: 'Success',
-        description: 'Promotion updated successfully',
+        title: "Promotion Updated",
+        description: "The promotion has been updated successfully.",
+      });
+      setIsFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to update promotion: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
+  
   const deleteMutation = useMutation({
     mutationFn: deletePromotion,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['promotions'] });
       toast({
-        title: 'Success',
-        description: 'Promotion deleted successfully',
+        title: "Promotion Deleted",
+        description: "The promotion has been deleted successfully.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to delete promotion: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
-  const handleAdd = () => {
-    setSelectedPromotion(null);
+  
+  const handleOpenForm = (item?: Promotion) => {
+    if (item) {
+      setSelectedItem(item);
+      setStartDate(new Date(item.start_date));
+      setEndDate(new Date(item.end_date));
+    } else {
+      setSelectedItem(null);
+      setStartDate(undefined);
+      setEndDate(undefined);
+    }
     setIsFormOpen(true);
   };
-
-  const handleEdit = (promotion: Promotion) => {
-    setSelectedPromotion(promotion);
-    setIsFormOpen(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this promotion?')) {
-      try {
-        await deleteMutation.mutateAsync(id);
-      } catch (error) {
-        console.error('Failed to delete promotion:', error);
-      }
+  
+  const handleSubmit = async (data: FormValues) => {
+    const formattedStartDate = format(startDate || new Date(), 'yyyy-MM-dd');
+    const formattedEndDate = format(endDate || new Date(), 'yyyy-MM-dd');
+    
+    const promotionData = {
+      ...data,
+      start_date: formattedStartDate,
+      end_date: formattedEndDate,
+      delete_flag: false,
+    };
+    
+    if (selectedItem) {
+      await updateMutation.mutateAsync({ id: selectedItem.id, ...promotionData });
+    } else {
+      await createMutation.mutateAsync(promotionData as Omit<Promotion, "id" | "created_at" | "updated_at">);
     }
   };
-
-  const handleSubmit = async (data: PromotionFormData) => {
-    try {
-      if (selectedPromotion) {
-        await updateMutation.mutateAsync({
-          id: selectedPromotion.id,
-          data: {
-            ...data,
-            delete_flag: false,
-          },
-        });
-      } else {
-        await createMutation.mutateAsync({
-          ...data,
-          delete_flag: false,
-        });
-      }
-      setIsFormOpen(false);
-    } catch (error) {
-      console.error('Failed to save promotion:', error);
+  
+  const handleConfirmDelete = async () => {
+    if (selectedItem) {
+      await deleteMutation.mutateAsync(selectedItem.id);
+      setIsDeleteDialogOpen(false);
+      setSelectedItem(null);
     }
   };
-
-  const formattedPromotion = selectedPromotion ? {
-    name: selectedPromotion.name,
-    description: selectedPromotion.description || '',
-    discount_rate: selectedPromotion.discount_rate,
-    start_date: selectedPromotion.start_date?.split('T')[0] || '',
-    end_date: selectedPromotion.end_date?.split('T')[0] || '',
-  } : {
-    name: '',
-    description: '',
-    discount_rate: 0,
-    start_date: new Date().toISOString().split('T')[0],
-    end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+  
+  const handleDeleteClick = (item: Promotion) => {
+    setSelectedItem(item);
+    setIsDeleteDialogOpen(true);
   };
-
-  const columns: Column<Promotion>[] = [
-    { 
-      header: 'Name', 
-      accessorKey: 'name', 
-    },
-    { 
-      header: 'Discount Rate', 
-      accessorKey: (item) => `${item.discount_rate}%`, 
-    },
-    { 
-      header: 'Start Date', 
-      accessorKey: (item) => format(new Date(item.start_date), 'MMM dd, yyyy'), 
-    },
-    { 
-      header: 'End Date', 
-      accessorKey: (item) => format(new Date(item.end_date), 'MMM dd, yyyy'), 
-    },
-    { 
-      header: 'Actions', 
-      accessorKey: 'id',
-      cell: (item) => (
-        <div className="flex space-x-2">
-          <Button variant="ghost" size="icon" onClick={() => handleEdit(item)}>
-            <Edit className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)}>
-            <Trash className="h-4 w-4" />
-          </Button>
-        </div>
-      ),
-    },
+  
+  const columns = [
+    { header: 'Name', accessorKey: 'name' },
+    { header: 'Description', accessorKey: 'description' },
+    { header: 'Discount Rate', accessorKey: 'discount_rate', cell: (item: Promotion) => `${item.discount_rate}%` },
+    { header: 'Start Date', accessorKey: 'start_date' },
+    { header: 'End Date', accessorKey: 'end_date' },
   ];
-
+  
   return (
-    <div className="space-y-4">
+    <div className="container mx-auto py-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold tracking-tight">Promotions</h2>
-        <Button onClick={handleAdd}>
-          <PlusCircle className="mr-2 h-4 w-4" /> Add Promotion
-        </Button>
+        <h1 className="text-3xl font-bold">Promotions</h1>
+        <Button onClick={() => handleOpenForm()}>Add New</Button>
       </div>
-
+      
       <DataTable
-        data={data?.data || []}
+        data={promotions}
         columns={columns}
-        totalItems={data?.total || 0}
-        currentPage={page}
-        pageSize={pageSize}
-        onPageChange={setPage}
-        onSearch={setSearchQuery}
-        searchPlaceholder="Search promotions..."
-        isLoading={isLoading}
+        onEdit={handleOpenForm}
+        onDelete={handleDeleteClick}
+        searchFields={['name', 'description']}
+        idField="id"
       />
-
+      
       <DataForm
         schema={promotionSchema}
-        defaultValues={formattedPromotion}
+        defaultValues={selectedItem ? {
+          name: selectedItem.name,
+          description: selectedItem.description,
+          discount_rate: selectedItem.discount_rate,
+          start_date: selectedItem.start_date,
+          end_date: selectedItem.end_date,
+        } : {
+          name: '',
+          description: '',
+          discount_rate: 0,
+          start_date: '',
+          end_date: '',
+        }}
         onSubmit={handleSubmit}
-        title={selectedPromotion ? 'Edit Promotion' : 'Add Promotion'}
-        description={selectedPromotion ? 'Update promotion details' : 'Create a new promotion'}
+        title={selectedItem ? 'Edit Promotion' : 'Add Promotion'}
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         isSubmitting={createMutation.isPending || updateMutation.isPending}
       >
-        <div className="space-y-4">
-          <FormField
-            name="name"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Name</FormLabel>
-                <FormControl>
-                  <Input placeholder="Summer Sale" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            name="description"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Description</FormLabel>
-                <FormControl>
-                  <Textarea placeholder="Special discount for summer" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            name="discount_rate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Discount Rate (%)</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    placeholder="10"
-                    {...field}
-                    onChange={(e) => field.onChange(parseFloat(e.target.value))}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <FormField
-              name="start_date"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Start Date</FormLabel>
-                  <FormControl>
-                    <Input type="date" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              name="end_date"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>End Date</FormLabel>
-                  <FormControl>
-                    <Input type="date" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-        </div>
+        <FormField
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Name</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="description"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Description</FormLabel>
+              <FormControl>
+                <Textarea {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="discount_rate"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Discount Rate (%)</FormLabel>
+              <FormControl>
+                <Input {...field} type="number" min="0" max="100" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="start_date"
+          render={({ field }) => (
+            <FormItem className="flex flex-col">
+              <FormLabel>Start Date</FormLabel>
+              <FormControl>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant={"outline"}
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !startDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {startDate ? format(startDate, "PPP") : <span>Pick a date</span>}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={startDate}
+                      onSelect={(date) => {
+                        setStartDate(date);
+                        field.onChange(date ? format(date, "yyyy-MM-dd") : "");
+                      }}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                  </PopoverContent>
+                </Popover>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="end_date"
+          render={({ field }) => (
+            <FormItem className="flex flex-col">
+              <FormLabel>End Date</FormLabel>
+              <FormControl>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant={"outline"}
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !endDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {endDate ? format(endDate, "PPP") : <span>Pick a date</span>}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={endDate}
+                      onSelect={(date) => {
+                        setEndDate(date);
+                        field.onChange(date ? format(date, "yyyy-MM-dd") : "");
+                      }}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                      disabled={(date) => {
+                        return startDate ? date < startDate : false;
+                      }}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
       </DataForm>
+      
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the promotion.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
-};
-
-export default Promotions;
+}

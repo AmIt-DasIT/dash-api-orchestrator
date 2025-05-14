@@ -2,215 +2,205 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Edit, Trash } from 'lucide-react';
-import { DataTable, Column } from '@/components/shared/DataTable';
+import { Input } from '@/components/ui/input';
+import { DataTable } from '@/components/shared/DataTable';
 import { DataForm } from '@/components/shared/DataForm';
 import { FormField, FormItem, FormLabel, FormControl, FormMessage } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, 
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
+import { z } from 'zod';
 import { getShippingMethods, createShippingMethod, updateShippingMethod, deleteShippingMethod } from '@/api/shipping';
 import { ShippingMethod } from '@/types';
-import { z } from 'zod';
-import { useToast } from '@/hooks/use-toast';
 
 const shippingSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  price: z.number().min(0, 'Price must be positive'),
+  name: z.string().min(2, { message: "Name must be at least 2 characters." }),
+  price: z.coerce.number().min(0, { message: "Price must be at least 0." }),
 });
 
-type ShippingFormData = z.infer<typeof shippingSchema>;
+type FormValues = z.infer<typeof shippingSchema>;
 
-const Shipping = () => {
-  const [page, setPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState('');
+export default function Shipping() {
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [selectedMethod, setSelectedMethod] = useState<ShippingMethod | null>(null);
-  const queryClient = useQueryClient();
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<ShippingMethod | null>(null);
+  
   const { toast } = useToast();
-  const pageSize = 10;
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['shipping', page, searchQuery],
-    queryFn: () => getShippingMethods(page, pageSize, searchQuery),
+  const queryClient = useQueryClient();
+  
+  const { data: shippingMethods = [], isLoading } = useQuery({
+    queryKey: ['shipping'],
+    queryFn: getShippingMethods,
   });
-
+  
   const createMutation = useMutation({
     mutationFn: createShippingMethod,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shipping'] });
       toast({
-        title: 'Success',
-        description: 'Shipping method created successfully',
+        title: "Shipping Method Created",
+        description: "The shipping method has been created successfully.",
+      });
+      setIsFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to create shipping method: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
+  
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Omit<ShippingMethod, 'id' | 'created_at' | 'updated_at'>> }) => 
-      updateShippingMethod(id, data),
+    mutationFn: updateShippingMethod,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shipping'] });
       toast({
-        title: 'Success',
-        description: 'Shipping method updated successfully',
+        title: "Shipping Method Updated",
+        description: "The shipping method has been updated successfully.",
+      });
+      setIsFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to update shipping method: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
+  
   const deleteMutation = useMutation({
     mutationFn: deleteShippingMethod,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shipping'] });
       toast({
-        title: 'Success',
-        description: 'Shipping method deleted successfully',
+        title: "Shipping Method Deleted",
+        description: "The shipping method has been deleted successfully.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to delete shipping method: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
-  const handleAdd = () => {
-    setSelectedMethod(null);
+  
+  const handleOpenForm = (item?: ShippingMethod) => {
+    if (item) {
+      setSelectedItem(item);
+    } else {
+      setSelectedItem(null);
+    }
     setIsFormOpen(true);
   };
-
-  const handleEdit = (method: ShippingMethod) => {
-    setSelectedMethod(method);
-    setIsFormOpen(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this shipping method?')) {
-      try {
-        await deleteMutation.mutateAsync(id);
-      } catch (error) {
-        console.error('Failed to delete shipping method:', error);
-      }
+  
+  const handleSubmit = async (data: FormValues) => {
+    const shippingData = {
+      ...data,
+      delete_flag: false,
+    };
+    
+    if (selectedItem) {
+      await updateMutation.mutateAsync({ id: selectedItem.id, ...shippingData });
+    } else {
+      await createMutation.mutateAsync(shippingData as Omit<ShippingMethod, "id" | "created_at" | "updated_at">);
     }
   };
-
-  const handleSubmit = async (data: ShippingFormData) => {
-    try {
-      if (selectedMethod) {
-        await updateMutation.mutateAsync({
-          id: selectedMethod.id,
-          data: {
-            ...data,
-            delete_flag: false,
-          },
-        });
-      } else {
-        await createMutation.mutateAsync({
-          ...data,
-          delete_flag: false,
-        });
-      }
-      setIsFormOpen(false);
-    } catch (error) {
-      console.error('Failed to save shipping method:', error);
+  
+  const handleConfirmDelete = async () => {
+    if (selectedItem) {
+      await deleteMutation.mutateAsync(selectedItem.id);
+      setIsDeleteDialogOpen(false);
+      setSelectedItem(null);
     }
   };
-
-  const defaultValues: ShippingFormData = selectedMethod
-    ? {
-        name: selectedMethod.name,
-        price: selectedMethod.price,
-      }
-    : {
-        name: '',
-        price: 0,
-      };
-
-  const columns: Column<ShippingMethod>[] = [
-    { 
-      header: 'Name', 
-      accessorKey: 'name', 
-    },
-    { 
-      header: 'Price', 
-      accessorKey: (item) => `$${item.price.toFixed(2)}`, 
-    },
-    { 
-      header: 'Actions', 
-      accessorKey: 'id',
-      cell: (item) => (
-        <div className="flex space-x-2">
-          <Button variant="ghost" size="icon" onClick={() => handleEdit(item)}>
-            <Edit className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)}>
-            <Trash className="h-4 w-4" />
-          </Button>
-        </div>
-      ),
-    },
+  
+  const handleDeleteClick = (item: ShippingMethod) => {
+    setSelectedItem(item);
+    setIsDeleteDialogOpen(true);
+  };
+  
+  const columns = [
+    { header: 'Name', accessorKey: 'name' },
+    { header: 'Price', accessorKey: 'price', cell: (item: ShippingMethod) => `$${item.price.toFixed(2)}` },
   ];
-
+  
   return (
-    <div className="space-y-4">
+    <div className="container mx-auto py-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold tracking-tight">Shipping Methods</h2>
-        <Button onClick={handleAdd}>
-          <PlusCircle className="mr-2 h-4 w-4" /> Add Shipping Method
-        </Button>
+        <h1 className="text-3xl font-bold">Shipping Methods</h1>
+        <Button onClick={() => handleOpenForm()}>Add New</Button>
       </div>
-
+      
       <DataTable
-        data={data?.data || []}
+        data={shippingMethods}
         columns={columns}
-        totalItems={data?.total || 0}
-        currentPage={page}
-        pageSize={pageSize}
-        onPageChange={setPage}
-        onSearch={setSearchQuery}
-        searchPlaceholder="Search shipping methods..."
-        isLoading={isLoading}
+        onEdit={handleOpenForm}
+        onDelete={handleDeleteClick}
+        searchFields={['name']}
+        idField="id"
       />
-
+      
       <DataForm
         schema={shippingSchema}
-        defaultValues={defaultValues}
+        defaultValues={selectedItem ? {
+          name: selectedItem.name,
+          price: selectedItem.price,
+        } : {
+          name: '',
+          price: 0,
+        }}
         onSubmit={handleSubmit}
-        title={selectedMethod ? 'Edit Shipping Method' : 'Add Shipping Method'}
-        description={selectedMethod ? 'Update shipping method details' : 'Create a new shipping method'}
+        title={selectedItem ? 'Edit Shipping Method' : 'Add Shipping Method'}
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         isSubmitting={createMutation.isPending || updateMutation.isPending}
       >
-        <div className="space-y-4">
-          <FormField
-            name="name"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Name</FormLabel>
-                <FormControl>
-                  <Input placeholder="Express Delivery" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            name="price"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Price ($)</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    placeholder="9.99"
-                    {...field}
-                    onChange={(e) => field.onChange(parseFloat(e.target.value))}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+        <FormField
+          name="name"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Name</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="price"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Price</FormLabel>
+              <FormControl>
+                <Input {...field} type="number" min="0" step="0.01" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
       </DataForm>
+      
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the shipping method.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
-};
-
-export default Shipping;
+}

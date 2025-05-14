@@ -2,293 +2,240 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Edit, Trash, Star } from 'lucide-react';
-import { DataTable, Column } from '@/components/shared/DataTable';
+import { Input } from '@/components/ui/input';
+import { DataTable } from '@/components/shared/DataTable';
 import { DataForm } from '@/components/shared/DataForm';
 import { FormField, FormItem, FormLabel, FormControl, FormMessage } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Select } from '@/components/ui/select';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, 
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
+import { z } from 'zod';
 import { getReviews, createReview, updateReview, deleteReview } from '@/api/review';
 import { UserReview } from '@/types';
-import { z } from 'zod';
-import { useToast } from '@/hooks/use-toast';
 
 const reviewSchema = z.object({
-  user_id: z.string().min(1, 'User is required'),
-  ordered_product_id: z.string().optional().nullable(),
-  rating_value: z.number().min(1, 'Rating must be at least 1').max(5, 'Rating cannot exceed 5'),
-  comment: z.string().optional().nullable(),
+  user_id: z.string().min(1, { message: "User ID is required." }),
+  ordered_product_id: z.string().min(1, { message: "Product ID is required." }),
+  rating_value: z.coerce.number().min(1, { message: "Rating must be at least 1." }).max(5, { message: "Rating must be at most 5." }),
+  comment: z.string().optional(),
 });
 
-type ReviewFormData = z.infer<typeof reviewSchema>;
+type FormValues = z.infer<typeof reviewSchema>;
 
-const Reviews = () => {
-  const [page, setPage] = useState(1);
-  const [searchQuery, setSearchQuery] = useState('');
+export default function Reviews() {
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [selectedReview, setSelectedReview] = useState<UserReview | null>(null);
-  const queryClient = useQueryClient();
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<UserReview | null>(null);
+  
   const { toast } = useToast();
-  const pageSize = 10;
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['reviews', page, searchQuery],
-    queryFn: () => getReviews(page, pageSize, searchQuery),
+  const queryClient = useQueryClient();
+  
+  const { data: reviews = [], isLoading } = useQuery({
+    queryKey: ['reviews'],
+    queryFn: getReviews,
   });
-
+  
   const createMutation = useMutation({
     mutationFn: createReview,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
       toast({
-        title: 'Success',
-        description: 'Review created successfully',
+        title: "Review Created",
+        description: "The review has been created successfully.",
+      });
+      setIsFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to create review: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
+  
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Omit<UserReview, 'id' | 'created_at' | 'updated_at'>> }) => 
-      updateReview(id, data),
+    mutationFn: updateReview,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
       toast({
-        title: 'Success',
-        description: 'Review updated successfully',
+        title: "Review Updated",
+        description: "The review has been updated successfully.",
+      });
+      setIsFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to update review: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
+  
   const deleteMutation = useMutation({
     mutationFn: deleteReview,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reviews'] });
       toast({
-        title: 'Success',
-        description: 'Review deleted successfully',
+        title: "Review Deleted",
+        description: "The review has been deleted successfully.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: `Failed to delete review: ${error.message}`,
+        variant: "destructive",
       });
     },
   });
-
-  const handleAdd = () => {
-    setSelectedReview(null);
+  
+  const handleOpenForm = (item?: UserReview) => {
+    if (item) {
+      setSelectedItem(item);
+    } else {
+      setSelectedItem(null);
+    }
     setIsFormOpen(true);
   };
-
-  const handleEdit = (review: UserReview) => {
-    setSelectedReview(review);
-    setIsFormOpen(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this review?')) {
-      try {
-        await deleteMutation.mutateAsync(id);
-      } catch (error) {
-        console.error('Failed to delete review:', error);
-      }
+  
+  const handleSubmit = async (data: FormValues) => {
+    const reviewData = {
+      ...data,
+      delete_flag: false,
+    };
+    
+    if (selectedItem) {
+      await updateMutation.mutateAsync({ id: selectedItem.id, ...reviewData });
+    } else {
+      await createMutation.mutateAsync(reviewData as Omit<UserReview, "id" | "created_at" | "updated_at">);
     }
   };
-
-  const handleSubmit = async (data: ReviewFormData) => {
-    try {
-      if (selectedReview) {
-        await updateMutation.mutateAsync({
-          id: selectedReview.id,
-          data: {
-            ...data,
-            delete_flag: false,
-          },
-        });
-      } else {
-        await createMutation.mutateAsync({
-          ...data,
-          delete_flag: false,
-        });
-      }
-      setIsFormOpen(false);
-    } catch (error) {
-      console.error('Failed to save review:', error);
+  
+  const handleConfirmDelete = async () => {
+    if (selectedItem) {
+      await deleteMutation.mutateAsync(selectedItem.id);
+      setIsDeleteDialogOpen(false);
+      setSelectedItem(null);
     }
   };
-
-  const defaultValues: ReviewFormData = selectedReview
-    ? {
-        user_id: selectedReview.user_id,
-        ordered_product_id: selectedReview.ordered_product_id,
-        rating_value: selectedReview.rating_value,
-        comment: selectedReview.comment,
-      }
-    : {
-        user_id: '',
-        ordered_product_id: null,
-        rating_value: 5,
-        comment: '',
-      };
-
-  const renderStarRating = (rating: number) => {
-    return (
-      <div className="flex">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Star
-            key={i}
-            className={`h-4 w-4 ${i < rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`}
-          />
-        ))}
-      </div>
-    );
+  
+  const handleDeleteClick = (item: UserReview) => {
+    setSelectedItem(item);
+    setIsDeleteDialogOpen(true);
   };
-
-  const columns: Column<UserReview>[] = [
-    { 
-      header: 'User ID', 
-      accessorKey: 'user_id',
-      cell: (item) => (
-        <span className="font-mono text-sm">{item.user_id.substring(0, 8)}...</span>
-      ),
-    },
-    { 
-      header: 'Product ID', 
-      accessorKey: (item) => item.ordered_product_id ? 
-        `${item.ordered_product_id.substring(0, 8)}...` : 'N/A',
-      cell: (item) => (
-        <span className="font-mono text-sm">
-          {item.ordered_product_id ? 
-            `${item.ordered_product_id.substring(0, 8)}...` : 'N/A'}
-        </span>
-      ),
-    },
-    {
-      header: 'Rating',
-      accessorKey: 'rating_value',
-      cell: (item) => renderStarRating(item.rating_value),
-    },
-    {
-      header: 'Comment',
-      accessorKey: 'comment',
-      cell: (item) => (
-        <div className="max-w-md truncate">
-          {item.comment || 'No comment'}
-        </div>
-      ),
-    },
-    { 
-      header: 'Actions', 
-      accessorKey: 'id',
-      cell: (item) => (
-        <div className="flex space-x-2">
-          <Button variant="ghost" size="icon" onClick={() => handleEdit(item)}>
-            <Edit className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)}>
-            <Trash className="h-4 w-4" />
-          </Button>
-        </div>
-      ),
-    },
+  
+  const columns = [
+    { header: 'User ID', accessorKey: 'user_id' },
+    { header: 'Product ID', accessorKey: 'ordered_product_id' },
+    { header: 'Rating', accessorKey: 'rating_value', cell: (item: UserReview) => '⭐'.repeat(item.rating_value) },
+    { header: 'Comment', accessorKey: 'comment' },
   ];
-
+  
   return (
-    <div className="space-y-4">
+    <div className="container mx-auto py-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold tracking-tight">Customer Reviews</h2>
-        <Button onClick={handleAdd}>
-          <PlusCircle className="mr-2 h-4 w-4" /> Add Review
-        </Button>
+        <h1 className="text-3xl font-bold">Reviews</h1>
+        <Button onClick={() => handleOpenForm()}>Add New</Button>
       </div>
-
+      
       <DataTable
-        data={data?.data || []}
+        data={reviews}
         columns={columns}
-        totalItems={data?.total || 0}
-        currentPage={page}
-        pageSize={pageSize}
-        onPageChange={setPage}
-        onSearch={setSearchQuery}
-        searchPlaceholder="Search reviews..."
-        isLoading={isLoading}
+        onEdit={handleOpenForm}
+        onDelete={handleDeleteClick}
+        searchFields={['user_id', 'ordered_product_id', 'comment']}
+        idField="id"
       />
-
+      
       <DataForm
         schema={reviewSchema}
-        defaultValues={defaultValues}
+        defaultValues={selectedItem ? {
+          user_id: selectedItem.user_id,
+          ordered_product_id: selectedItem.ordered_product_id,
+          rating_value: selectedItem.rating_value,
+          comment: selectedItem.comment || '',
+        } : {
+          user_id: '',
+          ordered_product_id: '',
+          rating_value: 5,
+          comment: '',
+        }}
         onSubmit={handleSubmit}
-        title={selectedReview ? 'Edit Review' : 'Add Review'}
-        description={selectedReview ? 'Update review details' : 'Create a new review'}
+        title={selectedItem ? 'Edit Review' : 'Add Review'}
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         isSubmitting={createMutation.isPending || updateMutation.isPending}
       >
-        <div className="space-y-4">
-          <FormField
-            name="user_id"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>User ID</FormLabel>
-                <FormControl>
-                  <Input placeholder="User ID" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            name="ordered_product_id"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Product ID (Optional)</FormLabel>
-                <FormControl>
-                  <Input placeholder="Product ID" {...field} value={field.value || ''} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            name="rating_value"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Rating</FormLabel>
-                <FormControl>
-                  <Select
-                    value={field.value.toString()}
-                    onChange={(e) => field.onChange(parseInt(e.target.value))}
-                  >
-                    <option value="1">1 - Poor</option>
-                    <option value="2">2 - Fair</option>
-                    <option value="3">3 - Average</option>
-                    <option value="4">4 - Good</option>
-                    <option value="5">5 - Excellent</option>
-                  </Select>
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            name="comment"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Comment</FormLabel>
-                <FormControl>
-                  <Textarea 
-                    placeholder="Add a comment..." 
-                    {...field}
-                    value={field.value || ''}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </div>
+        <FormField
+          name="user_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>User ID</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="ordered_product_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Product ID</FormLabel>
+              <FormControl>
+                <Input {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="rating_value"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Rating (1-5)</FormLabel>
+              <FormControl>
+                <Input {...field} type="number" min="1" max="5" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        <FormField
+          name="comment"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Comment</FormLabel>
+              <FormControl>
+                <Textarea {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
       </DataForm>
+      
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the review.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
-};
-
-export default Reviews;
+}

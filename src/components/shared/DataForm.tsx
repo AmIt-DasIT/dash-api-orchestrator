@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerFooter, DrawerDescription } from '@/components/ui/drawer';
 import { useToast } from '@/hooks/use-toast';
-import { useMobile } from '@/hooks/use-mobile';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface DataFormProps<T extends ZodType> {
   schema: T;
@@ -42,7 +42,7 @@ export function DataForm<T extends ZodType>({
   });
   
   const { toast } = useToast();
-  const isMobile = useMobile();
+  const isMobile = useIsMobile();
 
   const handleSubmit = async (data: z.infer<T>) => {
     try {
